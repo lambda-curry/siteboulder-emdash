@@ -1,5 +1,13 @@
 # @emdash-cms/blocks
 
+## 1.6.0
+
+### Patch Changes
+
+- [#4440](https://github.com/emdash-cms/emdash/pull/4440) [`c55e559`](https://github.com/emdash-cms/emdash/commit/c55e5595dc15f677ffa1d37620dc33092646aa02) Thanks [@khoinguyenpham04](https://github.com/khoinguyenpham04)! - Fixes `media_picker` subfields in native plugin Portable Text repeaters, so Block Kit types and validation accept the fields that the editor already renders. Each row still stores the selected asset's URL string.
+  
+  Updates `media_picker` in plugin Portable Text block forms and plugin field widgets to show the selected image in a compact card with visible Replace and Remove buttons. The card labels uploaded media, and image-service URLs that end in a variant rather than a filename, as "Selected image" instead of showing a generated storage key or variant name. The picker URL-encodes local storage keys so keys with spaces or reserved URL characters resolve.
+
 ## 1.5.0
 
 ### Patch Changes

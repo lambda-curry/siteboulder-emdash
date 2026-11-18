@@ -1,5 +1,11 @@
 # @emdash-cms/registry-verification
 
+## 0.3.6
+
+### Patch Changes
+
+- [#4935](https://github.com/emdash-cms/emdash/pull/4935) [`6d0551b`](https://github.com/emdash-cms/emdash/commit/6d0551bdec7f776d3f77233f095342f3aefeb1ac) Thanks [@ascorbic](https://github.com/ascorbic)! - Types `fetchVerifiedResource()` bytes as `Uint8Array<ArrayBuffer>`, so they can be passed to `new Response()` without a type assertion.
+
 ## 0.3.5
 
 ### Patch Changes

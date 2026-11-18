@@ -1,5 +1,55 @@
 # @emdash-cms/admin
 
+## 1.6.0
+
+### Minor Changes
+
+- [#4779](https://github.com/emdash-cms/emdash/pull/4779) [`8a44cde`](https://github.com/emdash-cms/emdash/commit/8a44cded4aff08f1fe135f6bfdd713b1a09d7ad1) Thanks [@khoinguyenpham04](https://github.com/khoinguyenpham04)! - Adds a **Hide settings** button at the end of the content editor's bar on screens 1024px and wider. Hiding the settings panel centers the page in the full width, and **Show settings** brings the panel back. The panel starts open, and each browser remembers the choice. A hidden panel opens on its own for image and gallery settings, and when Save is blocked by an invalid field inside it. While a version is open with the panel hidden, the bar shows the version stepper. On smaller screens, the same button replaces **Settings** in the bar and opens the panel over the page.
+
+- [#4779](https://github.com/emdash-cms/emdash/pull/4779) [`8a44cde`](https://github.com/emdash-cms/emdash/commit/8a44cded4aff08f1fe135f6bfdd713b1a09d7ad1) Thanks [@khoinguyenpham04](https://github.com/khoinguyenpham04)! - Removes distraction-free mode from the content editor, including its button in the editor's bar and the ⌘⇧\ (Ctrl+Shift+\ on Windows and Linux) shortcut. To give the page more room on screens 1024px and wider, hide the settings panel with the toggle at the end of the bar.
+
+### Patch Changes
+
+- [#4624](https://github.com/emdash-cms/emdash/pull/4624) [`8c2ec3f`](https://github.com/emdash-cms/emdash/commit/8c2ec3f80405ce7dee7de6f0c8b9f8595d35826c) Thanks [@ferivoq](https://github.com/ferivoq)! - Adds missing Hungarian translations for the admin interface, including the content editor, media library, forms, calendar, and site transfer screens.
+
+- [#4779](https://github.com/emdash-cms/emdash/pull/4779) [`8a44cde`](https://github.com/emdash-cms/emdash/commit/8a44cded4aff08f1fe135f6bfdd713b1a09d7ad1) Thanks [@khoinguyenpham04](https://github.com/khoinguyenpham04)! - Gives **Publish** and **Unpublish** in the content editor matching globe icons, replacing the upload arrow and the crossed-out eye.
+
+- [#4806](https://github.com/emdash-cms/emdash/pull/4806) [`b58be50`](https://github.com/emdash-cms/emdash/commit/b58be5079daf5dc5320064abd1f676aed25869e6) Thanks [@CacheMeOwside](https://github.com/CacheMeOwside)! - Translates Hindi admin, including the forms plugin settings, block field controls, and form validation messages. Hindi now uses transliterated terms for "content", "content type" and "redirect" across the admin.
+
+- [#4912](https://github.com/emdash-cms/emdash/pull/4912) [`814bba4`](https://github.com/emdash-cms/emdash/commit/814bba4c81ec2f5a42eadb06e4dcc0018009a602) Thanks [@Zahid09987](https://github.com/Zahid09987)! - Updates Indonesian (`id`) admin translations for email settings, form notifications and conditional fields, co-editing and entry lock notices, block and Portable Text editors, redirects, and layout controls.
+
+- [#4785](https://github.com/emdash-cms/emdash/pull/4785) [`d3c66d2`](https://github.com/emdash-cms/emdash/commit/d3c66d28fb65e308b1f7a655dd04e59cbe859fe6) Thanks [@tamersaadeh](https://github.com/tamersaadeh)! - Adds Italian (Italiano) translations for the whole admin interface and makes Italian selectable in the language picker on the sign-in page and in Settings. Browsers that prefer Italian now get the Italian admin automatically, and a site whose language is set to Italian sends its invite, sign-in and recovery emails in Italian. To keep Italian out of the admin, leave `it` out of the `admin.locales` option.
+
+- [#4769](https://github.com/emdash-cms/emdash/pull/4769) [`7ce0d77`](https://github.com/emdash-cms/emdash/commit/7ce0d770c0ace5cfb245a75361848050e4978e55) Thanks [@Yusaku01](https://github.com/Yusaku01)! - Adds missing Japanese translations for block editing, email settings, site status, sidebar customization, content list dates, scheduled publishing notices, and other admin controls.
+
+- [#4847](https://github.com/emdash-cms/emdash/pull/4847) [`9b131c3`](https://github.com/emdash-cms/emdash/commit/9b131c37d49e97894937f471b5c8b2ea403576ae) Thanks [@Yusaku01](https://github.com/Yusaku01)! - Adds missing Japanese translations for co-editing, save and recovery notices, revision history, WordPress import warnings, and other admin controls.
+
+- [#4945](https://github.com/emdash-cms/emdash/pull/4945) [`f0c28ef`](https://github.com/emdash-cms/emdash/commit/f0c28ef5e6c7f18662f279ff92f2657f6a9c2613) Thanks [@Yusaku01](https://github.com/Yusaku01)! - Adds Japanese translations for the button that shows and hides the editor's settings panel.
+
+- [#4919](https://github.com/emdash-cms/emdash/pull/4919) [`a0fdb0d`](https://github.com/emdash-cms/emdash/commit/a0fdb0dffad5179a85f8d7d9848586f4579fea88) Thanks [@MartynasKi](https://github.com/MartynasKi)! - Adds a Lithuanian (`lt`) admin translation covering the whole admin catalog, including system emails and the date picker.
+
+- [#4832](https://github.com/emdash-cms/emdash/pull/4832) [`64b3288`](https://github.com/emdash-cms/emdash/commit/64b32880af1c0ea8d3554b06eca69420a8c56a82) Thanks [@emdash-autofix](https://github.com/apps/emdash-autofix)! - Fixes stale dashboard counts, content lists, calendar entries, trash, and content search results after saving, publishing, unpublishing, deleting, or restoring content in the admin.
+
+- [#4942](https://github.com/emdash-cms/emdash/pull/4942) [`1118efe`](https://github.com/emdash-cms/emdash/commit/1118efeb7c0535cda4e8d5e66c1b4f238be682ff) Thanks [@kegren](https://github.com/kegren)! - Translates the Swedish admin strings added in 1.5, including co-editing, the sidebar layout settings and the content list date column.
+
+- [#4905](https://github.com/emdash-cms/emdash/pull/4905) [`a5bd731`](https://github.com/emdash-cms/emdash/commit/a5bd7316030a30a553881fbd53367bb5cc05513b) Thanks [@emdash-autofix](https://github.com/apps/emdash-autofix)! - Fixes visual editing deep links to fields inside blocks so the editor opens the addressed block, indexed repeater item, and Advanced section when needed, then scrolls to and focuses the field.
+  
+  Fixes settings-panel deep links for publication date, bylines, slug, and SEO. The editor opens a collapsed desktop panel or mobile sheet before focusing, preserves the stored panel preference, and keeps collection fields with matching names ahead of these settings aliases.
+
+- [#4440](https://github.com/emdash-cms/emdash/pull/4440) [`c55e559`](https://github.com/emdash-cms/emdash/commit/c55e5595dc15f677ffa1d37620dc33092646aa02) Thanks [@khoinguyenpham04](https://github.com/khoinguyenpham04)! - Fixes `media_picker` subfields in native plugin Portable Text repeaters, so Block Kit types and validation accept the fields that the editor already renders. Each row still stores the selected asset's URL string.
+  
+  Updates `media_picker` in plugin Portable Text block forms and plugin field widgets to show the selected image in a compact card with visible Replace and Remove buttons. The card labels uploaded media, and image-service URLs that end in a variant rather than a filename, as "Selected image" instead of showing a generated storage key or variant name. The picker URL-encodes local storage keys so keys with spaces or reserved URL characters resolve.
+
+- [#4835](https://github.com/emdash-cms/emdash/pull/4835) [`41149d9`](https://github.com/emdash-cms/emdash/commit/41149d97e5142176eff83bf9521e5f092a234924) Thanks [@zaochih](https://github.com/zaochih)! - Fixes the "(optional)" marker and the info-icon label on form fields staying in English when the admin is set to another language.
+
+- [#4788](https://github.com/emdash-cms/emdash/pull/4788) [`4cf36d3`](https://github.com/emdash-cms/emdash/commit/4cf36d3d9673ad180f7b7eb5f8908a65b62630c7) Thanks [@nqt9002](https://github.com/nqt9002)! - Adds a Vietnamese (`vi`) admin translation covering the whole admin catalog, including system emails and the date picker.
+
+- [#4834](https://github.com/emdash-cms/emdash/pull/4834) [`7218164`](https://github.com/emdash-cms/emdash/commit/72181643a1e16dbf6e0af293d869bc8bd7fbac9c) Thanks [@zaochih](https://github.com/zaochih)! - Adds missing Simplified Chinese translations for email settings, co-editing and sync status notices, block editing, redirects, sidebar customization, site status, and other admin controls, and makes the terms for slug, taxonomy term, and reusable section consistent across the catalog.
+
+- [#4845](https://github.com/emdash-cms/emdash/pull/4845) [`c73c600`](https://github.com/emdash-cms/emdash/commit/c73c6008f49c66d4f6629bf7436c883877e21344) Thanks [@leevincent](https://github.com/leevincent)! - Updates the Traditional Chinese (Taiwan, `zh-TW`) admin translations for form notifications, content revision history, publishing controls, and media management.
+- Updated dependencies [[`c55e559`](https://github.com/emdash-cms/emdash/commit/c55e5595dc15f677ffa1d37620dc33092646aa02)]:
+  - @emdash-cms/blocks@1.6.0
+
 <!-- emdash-changelog-archive: ./changelog/0.42.0-to-1.3.0.md -->
 
 ## 1.5.0
