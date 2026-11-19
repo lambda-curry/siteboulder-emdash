@@ -1,6 +1,7 @@
 import type { Kysely } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { handleApiTokenCreate } from "../../../src/api/handlers/api-tokens.js";
 import type { Database } from "../../../src/database/types.js";
 import { setupTestDatabase, teardownTestDatabase } from "../../utils/test-db.js";
 
@@ -121,10 +122,69 @@ describe("subject-based external authentication for platform-managed sites", () 
 		expect(rows).toHaveLength(1);
 		expect(rows[0]).toMatchObject({
 			id: original.id,
-			email: "owner@example.test",
+			email: "renamed@example.test",
 			name: "Renamed",
 			role: 30,
 		});
+	});
+
+	it("does not overwrite another user's email when the linked subject changes email", async () => {
+		const now = new Date().toISOString();
+		await db
+			.insertInto("users")
+			.values({
+				id: "other-user",
+				email: "taken@example.test",
+				name: "Other User",
+				role: 30,
+				email_verified: 1,
+				created_at: now,
+				updated_at: now,
+			})
+			.execute();
+		const first = await request(db, identity({ role: 40 }));
+		expect(first.response.status).toBe(200);
+		const change = await request(db, identity({ email: "taken@example.test", role: 50 }));
+		expect(change.response.status).toBe(403);
+		const user = (await userRows(db)).find((row) => row.email === "owner@example.test");
+		expect(user).toMatchObject({ role: 40 });
+		const [other] = await db
+			.selectFrom("users")
+			.selectAll()
+			.where("id", "=", "other-user")
+			.execute();
+		expect(other.email).toBe("taken@example.test");
+	});
+
+	it("revalidates the managed provider before OAuth and device consent, never session-only", async () => {
+		const oldSession = { get: vi.fn(async () => ({ user: { id: "old-session" } })), set: vi.fn() };
+		const emdash = {
+			db,
+			config: {
+				auth: {
+					type: "siteboulder",
+					entrypoint: "siteboulder/auth",
+					config: { identityMode: "subject" },
+				},
+			},
+		};
+		for (const path of ["/_emdash/oauth/authorize", "/_emdash/api/oauth/device/authorize"]) {
+			authenticate.mockRejectedValueOnce(new Error("membership revoked"));
+			const url = new URL(path, "https://site-one.example.test");
+			const locals: Record<string, unknown> = { emdash };
+			const response = await onRequest(
+				{
+					request: new Request(url),
+					url,
+					locals,
+					session: oldSession,
+					redirect: vi.fn(),
+				} as never,
+				async () => new Response("would issue an OAuth code"),
+			);
+			expect(response.status).toBe(401);
+			expect(locals.user).toBeUndefined();
+		}
 	});
 
 	it("does not link another subject to an existing email, even if it asserts Admin", async () => {
@@ -202,6 +262,62 @@ describe("subject-based external authentication for platform-managed sites", () 
 		expect(response.status).toBe(403);
 		expect(locals.user).toBeUndefined();
 		expect((await userRows(db))[0]).toMatchObject({ disabled: 1, role: 30 });
+	});
+
+	it("rechecks subject and current membership for every locally-issued bearer token", async () => {
+		await request(db, identity({ role: 50 }));
+		const [user] = await userRows(db);
+		const issued = await handleApiTokenCreate(db, user.id, {
+			name: "test-local-token",
+			scopes: ["admin"],
+		});
+		expect(issued.success).toBe(true);
+		if (!issued.success) throw new Error("PAT creation failed");
+		const token = issued.data.token;
+		const url = new URL("/_emdash/api/admin/users", "https://site-one.example.test");
+		const externalConfig = {
+			auth: {
+				type: "siteboulder",
+				entrypoint: "siteboulder/auth",
+				config: { identityMode: "subject" },
+			},
+		};
+		async function tokenCall() {
+			const locals: Record<string, unknown> = { emdash: { db, config: externalConfig } };
+			const response = await onRequest(
+				{
+					request: new Request(url, { headers: { Authorization: "Bearer " + token } }),
+					url,
+					locals,
+					session: { get: vi.fn(async () => null), set: vi.fn() },
+					redirect: vi.fn(),
+				} as never,
+				async () => new Response("ok"),
+			);
+			return { response, locals };
+		}
+
+		// A PAT by itself is not sufficient for Site Boulder-managed CMS access.
+		authenticate.mockRejectedValue(new Error("missing external assertion"));
+		expect((await tokenCall()).response.status).toBe(401);
+
+		// A fresh provider assertion is required and must match the PAT user.
+		authenticate.mockResolvedValue(identity({ role: 40 }));
+		const authorized = await tokenCall();
+		expect(authorized.response.status).toBe(200);
+		expect((authorized.locals.user as { id: string; role: number }).role).toBe(40);
+		expect((await userRows(db))[0].role).toBe(40);
+
+		// A *different* verified subject cannot reuse the old CMS PAT.
+		authenticate.mockResolvedValue(identity({ subject: "other-member", role: 50 }));
+		expect((await tokenCall()).response.status).toBe(401);
+
+		// Membership revocation must invalidate the token even while it remains
+		// stored as a valid local PAT.
+		authenticate.mockRejectedValue(new Error("member removed"));
+		expect((await tokenCall()).response.status).toBe(401);
+		const stored = await db.selectFrom("_emdash_api_tokens").select("id").execute();
+		expect(stored).toHaveLength(1);
 	});
 
 	it("honors current provider revocation even when a previous user session exists", async () => {

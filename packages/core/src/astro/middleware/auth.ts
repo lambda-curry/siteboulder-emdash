@@ -192,6 +192,15 @@ function isCsrfExemptPublicRoute(pathname: string): boolean {
 	return CSRF_EXEMPT_PUBLIC_ROUTES.has(stripTrailingSlash(pathname));
 }
 
+function isSubjectIdentityMode(config: unknown): boolean {
+	return (
+		config !== null &&
+		typeof config === "object" &&
+		"identityMode" in config &&
+		config.identityMode === "subject"
+	);
+}
+
 export const onRequest = defineMiddleware(async (context, next) => {
 	const { url } = context;
 
@@ -202,6 +211,27 @@ export const onRequest = defineMiddleware(async (context, next) => {
 	const isPublicApiRoute = isPublicEmDashRoute(url.pathname);
 
 	const isPublicRoute = !isAdminRoute && !isApiRoute;
+
+	// Consent endpoints may normally use the local EmDash session. On a
+	// platform-managed site that session can outlive external membership.
+	// Reverify the provider before allowing it to approve OAuth/device grants.
+	const externalMode = getAuthMode(context.locals.emdash?.config);
+	if (
+		externalMode.type === "external" &&
+		!import.meta.env.DEV &&
+		isSubjectIdentityMode(externalMode.config) &&
+		(stripTrailingSlash(url.pathname) === "/_emdash/oauth/authorize" ||
+			stripTrailingSlash(url.pathname) === "/_emdash/api/oauth/device/authorize")
+	) {
+		const emdash = context.locals.emdash;
+		if (!emdash?.db) return apiError("NOT_AUTHENTICATED", "Not authenticated", 401);
+		if (isApiRoute && isUnsafeMethod(context.request.method.toUpperCase())) {
+			const publicOrigin = getPublicOrigin(url, emdash.config);
+			const csrfError = checkPublicCsrf(context.request, url, publicOrigin);
+			if (csrfError) return csrfError;
+		}
+		return handleExternalAuth(context, next, emdash, externalMode, true);
+	}
 
 	// Public API routes skip auth but still need CSRF protection on state-changing methods.
 	// We check Origin header against the request host (same approach as Astro's checkOrigin).
@@ -456,6 +486,16 @@ async function handlePluginRouteAuth(
 	}
 
 	const authMode = getAuthMode(emdash?.config);
+	// Public plugin routes can be called by anyone. Do not infer a logged-in
+	// editor from a stale EmDash session in managed subject-identity mode.
+	if (
+		authMode.type === "external" &&
+		!import.meta.env.DEV &&
+		isSubjectIdentityMode(authMode.config) &&
+		isPublicPluginApiRoute(url.pathname, emdash)
+	) {
+		return next();
+	}
 	if (
 		emdash &&
 		authMode.type === "external" &&
@@ -503,6 +543,12 @@ async function handlePublicRouteAuth(
 	context: Parameters<Parameters<typeof defineMiddleware>[0]>[0],
 	next: Parameters<Parameters<typeof defineMiddleware>[0]>[1],
 ): Promise<Response> {
+	// A managed site's browser session is not an authorization assertion.
+	// Never silently treat it as an authenticated editor on public pages.
+	const mode = getAuthMode(context.locals.emdash?.config);
+	if (mode.type === "external" && !import.meta.env.DEV && isSubjectIdentityMode(mode.config)) {
+		return next();
+	}
 	if (
 		context.isPrerendered ||
 		context.cookies.get(virtualConfig?.sessionCookieName ?? "astro-session") === undefined
@@ -690,6 +736,17 @@ async function handleExternalAuth(
 			}
 			// User exists - check if we need to sync anything
 			const updates: Record<string, unknown> = {};
+			if (subjectIdentity && user.email !== authResult.email) {
+				const collision = await adapter.getUserByEmail(authResult.email);
+				if (collision && collision.id !== user.id) {
+					return new Response("External email belongs to another account", {
+						status: 403,
+						headers: { "Content-Type": "text/plain", ...MW_CACHE_HEADERS },
+					});
+				}
+				// Email is only a mutable attribute; provider subject remains identity.
+				updates.email = authResult.email;
+			}
 			let newName: string | undefined;
 			let newRole: RoleLevel | undefined;
 
@@ -711,8 +768,9 @@ async function handleExternalAuth(
 
 				user = {
 					...user,
+					...(updates.email ? { email: authResult.email } : {}),
 					...(newName ? { name: newName } : {}),
-					...(newRole ? { role: newRole } : {}),
+					...(newRole !== undefined ? { role: newRole } : {}),
 				};
 
 				console.log(
@@ -801,9 +859,43 @@ async function handleBearerAuth(
 
 	// Look up the user
 	const adapter = createKyselyAdapter(emdash.db);
-	const user = await adapter.getUserById(resolved.userId);
+	let user = await adapter.getUserById(resolved.userId);
 
 	if (!user || user.disabled) return "invalid";
+
+	// A local PAT/OAuth token alone must NOT retain CMS privileges after a
+	// platform-managed site membership is revoked. Require a fresh, verified
+	// external assertion for the very same linked subject on EVERY request.
+	// The platform MCP gateway supplies the user's delegated assertion in
+	// addition to the restricted EmDash token; direct legacy tokens fail closed.
+	const authMode = getAuthMode(emdash.config);
+	if (
+		authMode.type === "external" &&
+		!import.meta.env.DEV &&
+		isSubjectIdentityMode(authMode.config)
+	) {
+		try {
+			if (typeof virtualAuthenticate !== "function") return "invalid";
+			const assertion = await virtualAuthenticate(context.request, authMode.config);
+			const subject = assertion.subject?.trim();
+			if (!subject || subject.length > 256) return "invalid";
+			const link = await adapter.getOAuthAccount("external:" + authMode.providerType, subject);
+			if (!link || link.userId !== user.id) return "invalid";
+			const currentRole = toRoleLevel(assertion.role);
+			if (user.role !== currentRole) {
+				await emdash.db
+					.updateTable("users")
+					.set({ role: currentRole, updated_at: new Date().toISOString() })
+					.where("id", "=", user.id)
+					.execute();
+				user = { ...user, role: currentRole };
+			}
+		} catch {
+			// Missing/expired provider assertion, revoked site membership, or an
+			// issuer verification error invalidates the local credential.
+			return "invalid";
+		}
+	}
 
 	// Set user and scopes on locals
 	locals.user = user;
