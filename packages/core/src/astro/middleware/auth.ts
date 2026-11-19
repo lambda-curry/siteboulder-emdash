@@ -554,6 +554,29 @@ async function handleExternalAuth(
 	} catch (error) {
 		console.error("[external-auth] Auth error:", error);
 
+		// Opt-in browser SSO challenge for hosted sites: after the external
+		// credential expires, navigate to the platform's fixed login entrypoint.
+		// Never redirect API requests or honor an untrusted return URL here.
+		const loginUrl =
+			authMode.config &&
+			typeof authMode.config === "object" &&
+			"loginUrl" in authMode.config &&
+			typeof authMode.config.loginUrl === "string"
+				? authMode.config.loginUrl
+				: null;
+		if (!_isApiRoute && request.method === "GET" && loginUrl) {
+			try {
+				const destination = new URL(loginUrl);
+				if (destination.protocol === "https:" && !destination.username && !destination.password) {
+					return new Response(null, {
+						status: 302,
+						headers: { Location: destination.href, ...MW_CACHE_HEADERS },
+					});
+				}
+			} catch {
+				// Invalid provider config is not a trusted redirect destination.
+			}
+		}
 		return new Response("Authentication failed", {
 			status: 401,
 			headers: { "Content-Type": "text/plain", ...MW_CACHE_HEADERS },
@@ -566,9 +589,35 @@ async function handleExternalAuth(
 		// eslint-disable-next-line typescript/no-unsafe-type-assertion -- narrowing AuthModeConfig to ExternalAuthConfig after provider check
 		const externalConfig = authMode.config as ExternalAuthConfig;
 
-		// Find or create user
+		// Existing external providers keep email matching. Platform-managed
+		// sites opt into immutable, provider-qualified subject identity instead:
+		// an email match must never silently link a different external subject.
+		const subjectIdentity = externalConfig.identityMode === "subject";
+		const subject = authResult.subject?.trim();
+		if (subjectIdentity && (!subject || subject.length > 256)) {
+			return new Response("Invalid external identity", {
+				status: 401,
+				headers: { "Content-Type": "text/plain", ...MW_CACHE_HEADERS },
+			});
+		}
+		const provider = "external:" + authMode.providerType;
 		const adapter = createKyselyAdapter(emdash.db);
-		let user = await adapter.getUserByEmail(authResult.email);
+		const linkedAccount = subjectIdentity
+			? await adapter.getOAuthAccount(provider, subject!)
+			: null;
+		let user = subjectIdentity
+			? linkedAccount
+				? await adapter.getUserById(linkedAccount.userId)
+				: null
+			: await adapter.getUserByEmail(authResult.email);
+
+		// Do not create a new account if an existing link is corrupt.
+		if (linkedAccount && !user) {
+			return new Response("External identity unavailable", {
+				status: 403,
+				headers: { "Content-Type": "text/plain", ...MW_CACHE_HEADERS },
+			});
+		}
 
 		if (!user) {
 			// User doesn't exist
@@ -579,16 +628,25 @@ async function handleExternalAuth(
 				});
 			}
 
-			// Check if this is the first user (they become admin)
-			const userCount = await emdash.db
-				.selectFrom("users")
-				.select(emdash.db.fn.count("id").as("count"))
-				.executeTakeFirst();
+			// A verified subject with a reused email is not automatically the
+			// same user. Existing passkey accounts need explicit trusted linking.
+			if (subjectIdentity && (await adapter.getUserByEmail(authResult.email))) {
+				return new Response("External identity must be linked by an administrator", {
+					status: 403,
+					headers: { "Content-Type": "text/plain", ...MW_CACHE_HEADERS },
+				});
+			}
 
-			const isFirstUser = Number(userCount?.count ?? 0) === 0;
+			// Preserve legacy external first-user Admin bootstrap. Subject identity
+			// instead grants only the role verified by the external provider.
+			const userCount = subjectIdentity
+				? null
+				: await emdash.db
+						.selectFrom("users")
+						.select(emdash.db.fn.count("id").as("count"))
+						.executeTakeFirst();
+			const isFirstUser = !subjectIdentity && Number(userCount?.count ?? 0) === 0;
 			const role = isFirstUser ? ROLE_ADMIN : toRoleLevel(authResult.role);
-
-			// Create user
 			const now = new Date().toISOString();
 			const newUser = {
 				id: ulid(),
@@ -601,13 +659,35 @@ async function handleExternalAuth(
 			};
 
 			await emdash.db.insertInto("users").values(newUser).execute();
-
-			user = await adapter.getUserByEmail(authResult.email);
+			if (subjectIdentity) {
+				try {
+					await adapter.createOAuthAccount({
+						provider,
+						providerAccountId: subject!,
+						userId: newUser.id,
+					});
+				} catch (error) {
+					// A concurrent request might have linked this subject first.
+					// Clean up ONLY the user created by this request.
+					await emdash.db.deleteFrom("users").where("id", "=", newUser.id).execute();
+					throw error;
+				}
+			}
+			user = subjectIdentity
+				? await adapter.getUserById(newUser.id)
+				: await adapter.getUserByEmail(authResult.email);
 
 			console.log(
 				`[external-auth] Provisioned user: ${authResult.email} (role: ${role}, first: ${isFirstUser})`,
 			);
 		} else {
+			// Do not change or re-enable a disabled linked user.
+			if (subjectIdentity && user.disabled) {
+				return new Response("Account disabled", {
+					status: 403,
+					headers: { "Content-Type": "text/plain", ...MW_CACHE_HEADERS },
+				});
+			}
 			// User exists - check if we need to sync anything
 			const updates: Record<string, unknown> = {};
 			let newName: string | undefined;
@@ -618,8 +698,9 @@ async function handleExternalAuth(
 				updates.name = newName;
 			}
 
-			// Sync role if enabled
-			if (externalConfig.syncRoles && user.role !== authResult.role) {
+			// Subject-based identity always uses the current provider role,
+			// including after a downgrade, regardless of legacy syncRoles config.
+			if ((subjectIdentity || externalConfig.syncRoles) && user.role !== authResult.role) {
 				newRole = toRoleLevel(authResult.role);
 				updates.role = newRole;
 			}
