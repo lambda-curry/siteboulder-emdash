@@ -491,8 +491,28 @@ describe("subject-based external authentication for platform-managed sites", () 
 		expect(await userRows(db)).toHaveLength(1);
 		expect(await db.selectFrom("oauth_accounts").select("user_id").execute()).toHaveLength(1);
 
+		// An unlinked subject asserting the linked user's email is not that user.
+		expect((await publicPage(db, identity({ subject: "impostor" }))).locals.user).toBeUndefined();
+
 		await db.updateTable("users").set({ disabled: 1 }).where("id", "=", linked.id).execute();
 		expect((await publicPage(db, identity())).locals.user).toBeUndefined();
+	});
+
+	it("applies a provider downgrade on public pages and never falls back to the Astro session", async () => {
+		await request(db, identity({ role: 50 }));
+		const [linked] = await userRows(db);
+		expect(linked.role).toBe(50);
+		expect(
+			((await publicPage(db, identity({ role: 40 }))).locals.user as { role: number }).role,
+		).toBe(40);
+		const { resolveSessionUser } = await import("../../../src/astro/session-user.js");
+		vi.mocked(resolveSessionUser).mockResolvedValue({ id: linked.id } as never);
+		try {
+			const anonymous = await publicPage(db, new Error("No verified Site Boulder CMS identity"));
+			expect(anonymous.locals.user).toBeUndefined();
+		} finally {
+			vi.mocked(resolveSessionUser).mockResolvedValue(null as never);
+		}
 	});
 
 	it("never touches the Astro session on a site that keeps no session store", async () => {
