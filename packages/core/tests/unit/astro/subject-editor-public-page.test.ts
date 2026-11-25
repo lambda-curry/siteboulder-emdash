@@ -123,6 +123,7 @@ const { MOCK_RUNTIME } = vi.hoisted(() => {
 
 const mockCreateRuntime = vi.hoisted(() => vi.fn());
 
+const scopedDb = vi.hoisted(() => vi.fn().mockReturnValue(null));
 const authConfig = vi.hoisted(() => ({ identityMode: "subject" }) as Record<string, unknown>);
 vi.mock(
 	"virtual:emdash/config",
@@ -140,7 +141,7 @@ vi.mock(
 	"virtual:emdash/dialect",
 	() => ({
 		createDialect: vi.fn(),
-		createRequestScopedDb: vi.fn().mockReturnValue(null),
+		createRequestScopedDb: scopedDb,
 		// Absent on non-batching backends; the runtime falls back to the singleton.
 		createCoalescingDialect: undefined,
 	}),
@@ -191,6 +192,8 @@ const { authenticate } = vi.hoisted(() => ({ authenticate: vi.fn() }));
 vi.mock("virtual:emdash/auth", () => ({ authenticate }), { virtual: true });
 
 import runtimeMiddleware from "../../../src/astro/middleware.js";
+import requestContextMiddleware from "../../../src/astro/middleware/request-context.js";
+import { setupTestDatabase, teardownTestDatabase } from "../../utils/test-db.js";
 
 let authMiddleware: typeof import("../../../src/astro/middleware/auth.js").onRequest;
 beforeAll(async () => {
@@ -212,7 +215,7 @@ beforeEach(() => {
 	});
 });
 
-function chainContext(url: string, cookieValues: Record<string, string>) {
+function chainContext(url: string, cookieValues: Record<string, string>, isPrerendered = false) {
 	const cookieHeader = Object.entries(cookieValues)
 		.map(([k, v]) => k + "=" + v)
 		.join("; ");
@@ -230,14 +233,14 @@ function chainContext(url: string, cookieValues: Record<string, string>) {
 		},
 		locals,
 		redirect: vi.fn(),
-		isPrerendered: false,
+		isPrerendered,
 	};
 	Object.defineProperty(context, "session", { get: sessionRead });
 	return { context, locals, sessionRead };
 }
 
-async function runChain(url: string, cookieValues: Record<string, string>) {
-	const { context, locals, sessionRead } = chainContext(url, cookieValues);
+async function runChain(url: string, cookieValues: Record<string, string>, isPrerendered = false) {
+	const { context, locals, sessionRead } = chainContext(url, cookieValues, isPrerendered);
 	const response = await (runtimeMiddleware as any)(context, () =>
 		(authMiddleware as any)(
 			context,
@@ -271,7 +274,20 @@ describe("a subject-mode editor on a public page, through the real runtime middl
 			expect(emdash && "config" in emdash && "db" in emdash, url).toBe(true);
 			expect(authenticate, url).toHaveBeenCalledTimes(1);
 			expect(sessionRead, url).not.toHaveBeenCalled();
+			// A possible editor reads the primary, never a cached or replica binding.
+			expect(scopedDb.mock.calls.at(-1)?.[0], url).toMatchObject({
+				isAuthenticated: true,
+				canUseCachedBinding: false,
+			});
 		}
+	});
+
+	it("never treats a prerendered render as carrying the credential", async () => {
+		authConfig.credentialCookie = "__Host-sbo-cms-access";
+		const { locals } = await runChain("https://admin.site.example/blog/post", credential, true);
+		const emdash = locals.emdash as Record<string, unknown> | undefined;
+		expect(!!emdash && "config" in emdash).toBe(false);
+		expect(authenticate).not.toHaveBeenCalled();
 	});
 
 	it("keeps a visitor without the credential on the anonymous fast path, with no identity call", async () => {
@@ -279,6 +295,7 @@ describe("a subject-mode editor on a public page, through the real runtime middl
 		const { response } = await runChain("https://admin.site.example/blog/post", { other: "1" });
 		expect(response.status).toBe(200);
 		expect(authenticate).not.toHaveBeenCalled();
+		expect(scopedDb.mock.calls.at(-1)?.[0]).toMatchObject({ isAuthenticated: false });
 	});
 
 	it("is unchanged for a descriptor that declares no credential, or is not in subject mode", async () => {
@@ -293,5 +310,77 @@ describe("a subject-mode editor on a public page, through the real runtime middl
 			expect(authenticate).not.toHaveBeenCalled();
 		}
 		authConfig.identityMode = "subject";
+	});
+});
+
+describe("visual editing for a linked subject-mode editor, through runtime, auth and request context", () => {
+	let db: Awaited<ReturnType<typeof setupTestDatabase>>;
+	beforeEach(async () => {
+		db = await setupTestDatabase();
+		const now = new Date().toISOString();
+		await db
+			.insertInto("users")
+			.values({
+				id: "u1",
+				email: "owner@example.test",
+				name: "Owner",
+				role: 40,
+				email_verified: 1,
+				created_at: now,
+				updated_at: now,
+			})
+			.execute();
+		await db
+			.insertInto("oauth_accounts")
+			.values({
+				provider: "external:siteboulder",
+				provider_account_id: "siteboulder-user-1",
+				user_id: "u1",
+				created_at: now,
+			})
+			.execute();
+		(MOCK_RUNTIME as { db: unknown }).db = db;
+	});
+	afterEach(async () => {
+		delete authConfig.credentialCookie;
+		(MOCK_RUNTIME as { db: unknown }).db = {};
+		await teardownTestDatabase(db);
+	});
+
+	async function page(cookies: Record<string, string>) {
+		const { context, locals } = chainContext("https://admin.site.example/blog/post", cookies);
+		const response = await (runtimeMiddleware as any)(context, () =>
+			(authMiddleware as any)(context, () =>
+				(requestContextMiddleware as any)(
+					context,
+					async () =>
+						new Response("<!doctype html><html><body>page</body></html>", {
+							headers: { "content-type": "text/html", "cache-control": "public, max-age=60" },
+						}),
+				),
+			),
+		);
+		return { response, locals, html: await response.text() };
+	}
+
+	it("shows the toolbar to a verified editor on a plain visit, never cached, at the provider's role", async () => {
+		authConfig.credentialCookie = "__Host-sbo-cms-access";
+		const editor = await page(credential);
+		expect((editor.locals.user as { id: string; role: number }).id).toBe("u1");
+		expect((editor.locals.user as { role: number }).role).toBe(50);
+		expect(editor.html).toContain('id="emdash-toolbar"');
+		expect(editor.response.headers.get("cache-control")).toContain("no-store");
+	});
+
+	it("shows no toolbar without the declaration, or when the provider rejects the credential", async () => {
+		const undeclared = await page(credential);
+		expect(undeclared.locals.user).toBeUndefined();
+		expect(undeclared.html).not.toContain('id="emdash-toolbar"');
+		authConfig.credentialCookie = "__Host-sbo-cms-access";
+		authenticate.mockRejectedValue(new Error("No verified Site Boulder CMS identity"));
+		const rejected = await page(credential);
+		expect(rejected.response.status).toBe(200);
+		expect(rejected.locals.user).toBeUndefined();
+		expect(rejected.html).not.toContain('id="emdash-toolbar"');
 	});
 });
